@@ -31,36 +31,44 @@ public class GithubWebhookController {
     @PostMapping("/webhook")
     public ResponseEntity<String> handlePush(@RequestBody JsonNode payload) {
         try {
-            // 1. Extract Author from "pusher" object
-            String name = payload.path("pusher").path("name").asText();
-            String email = payload.path("pusher").path("email").asText();
+            // 1. Precise extraction with safety checks
+            JsonNode pusher = payload.path("pusher");
+            String name = pusher.path("name").asText();
+            String email = pusher.path("email").asText();
 
+            // If name or email is missing, the JSON format from GitHub might be different
+            if (name.isEmpty() || email.isEmpty()) {
+                System.out.println("⚠️ Warning: Pusher data missing. Checking 'sender' node instead...");
+                name = payload.path("sender").path("login").asText();
+                email = name + "@github.com"; // Fallback email
+            }
+
+            // 2. Database Logic
             Author author = authorRepository.findByEmail(email).orElse(new Author());
             author.setName(name);
             author.setEmail(email);
 
-            // 2. Extract Commits and build a summary string
-            StringBuilder commitMessages = new StringBuilder();
-            JsonNode commitsNode = payload.path("commits");
+            // 3. Extract Commits
+            StringBuilder commitSummary = new StringBuilder();
+            payload.path("commits").forEach(commit -> {
+                commitSummary.append("- ").append(commit.path("message").asText()).append("\n");
+            });
 
-            for (JsonNode node : commitsNode) {
-                CommitRecord record = new CommitRecord();
-                record.setMessage(node.path("message").asText());
-                record.setAuthor(author);
-                author.getCommits().add(record);
+            // 4. Save to H2
+            authorRepository.save(author);
+            System.out.println("✅ Saved to H2: " + name);
 
-                commitMessages.append("• ").append(record.getMessage()).append("\n");
+            // 5. Send Slack (Wrapped in try-catch so it doesn't cause a 500)
+            try {
+                sendSlackNotification(name, commitSummary.toString());
+            } catch (Exception slackEx) {
+                System.err.println("❌ Slack failed, but DB is saved: " + slackEx.getMessage());
             }
 
-            // 3. Save to H2 Database
-            authorRepository.save(author);
-
-            // 4. Send Slack Notification
-            sendSlackNotification(name, commitMessages.toString());
-
-            return ResponseEntity.ok("Webhook processed successfully");
+            return ResponseEntity.ok("Success");
         } catch (Exception e) {
-            return ResponseEntity.internalServerError().body("Error: " + e.getMessage());
+            e.printStackTrace(); // This shows the EXACT error in your IDE console
+            return ResponseEntity.status(500).body("Error: " + e.getMessage());
         }
     }
 
