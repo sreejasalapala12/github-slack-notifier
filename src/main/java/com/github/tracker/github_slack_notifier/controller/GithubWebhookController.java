@@ -91,7 +91,8 @@ public class GithubWebhookController {
 
         body.put("text", formattedText);
 
-        // Sending the POST request to the Slack Webhook URL
+        // Sending the POST request to the Slack Webhook URL hi
+        //jihj
         restTemplate.postForEntity(slackUrl, body, String.class);
     }
 }
